@@ -1,0 +1,1493 @@
+;WYR
+;
+;By Jeffrey Ouellette (malcontent) 2020
+;Comments to jddgames@yahoo.com
+;
+;Inspired by Within a Deep Forest.
+;For the 2020 Reset 4k Game Compo.
+;
+;This code is free to modify and use for non-commercial purposes.
+;
+;For Acme Assembler, best viewed with 8 space tabs.
+;
+
+	!to "wyr.prg",cbm
+	!cpu 6510
+	
+;-----------------------------------------
+;CONSTANTS AND REGISTERS
+	
+SPRITE_XY = $d000
+SPRITE_X_MSB = $d010
+VIC_CONTROL = $d011
+RASTER_LINE = $d012
+SPR_ENABLE  = $d015
+Y_EXPAND = $d017
+VIC_POINTER = $d018
+IRQ_REGISTER = $d019
+IRQ_ENABLE = $d01a
+DATA_PRIORITY = $d01b
+SPR_MCMODE = $d01c
+X_EXPAND = $d01d
+BG_COLLIDE = $d01f
+BO_COLOR = $d020
+BG_COLOR = $d021
+EBG_COLOR_1 = $d022
+EBG_COLOR_2 = $d023
+EBG_COLOR_3 = $d024
+MC1_COLOR = $d025
+MC2_COLOR = $d026
+SPR_COLOR = $d027
+
+
+SID = $d400
+
+IRQ_RETURN = $ea31
+COLOR = $d800
+SCREEN = $0400
+SPR_OFFSET = $07f8
+
+CURSOR_COLOR =  $0286
+
+;-----------------------------------------
+;ZP Definitions
+
+ghost_regs = $02
+v2_freq_lo = $02
+v3_freq_lo = $03
+v2_freq_hi = $04
+v3_freq_hi = $05
+v2_pulse_width_lo = $06
+v3_pulse_width_lo = $07
+v2_pulse_width_hi = $08
+v3_pulse_width_hi = $09
+v2_control = $0a
+v3_control = $0b
+v2_a_d = $0c
+v3_a_d = $0d
+v2_s_r = $0e
+v3_s_r = $0f
+
+music_timer = $10 ;$11
+music_data_pointer = $12 ;$13
+duration_timer = $14 ;$15
+lfo = $16
+
+voice_data = $17
+v2_data = $17
+v3_data = $19
+current_tune = $1b
+
+ball_x = $40 ;$41
+ball_y = $42 ;$43
+h_speed	= $44
+v_speed	= $45
+sitting_flag = $46
+ball_type = $47
+bounce_flag  = $48
+spawn_flag = $49
+
+ball_v_speed_zp = $4a ;$4b
+ball_h_speed_zp = $4c ;$4d
+
+dead_flag = $4e
+
+joy_temp = $50
+v_blank = $51
+
+current_room = $52
+checkpoint_room = $53
+checkpoint_screen_location = $54 ;$55
+
+tile_add = $56
+barrier_color = $57
+zp = $58	;vector to zp variables
+zp0 = $59	;always 0
+
+tempx = $5a
+tempy = $5b
+tempz = $5c
+tempa = $5d
+tempb = $5e
+tempc = $5f
+
+ball_unlocked_flags = $60 ;$61,$62,$63
+end_game_flag = $65
+
+;irq owned zp
+end_animation_timer = $70
+end_animation_flag = $71
+flashing_timer = $70
+flashing_counter = $71
+
+freq1 = $72
+laser_flag = $73
+laser_timer = $74
+music_toggle = $75
+last_key = $76
+
+title_flash_timer = $77
+title_bounce_counter = $78
+title_bounce_dir = $79
+
+
+zpa = $fb	;temp work area
+zpb = $fc
+zpc = $fd
+zpd = $fe
+
+score = SCREEN + (6*40) + 31
+last_score = SCREEN + (8*40) + 31
+
+	* = $800
+chars	!bin "wyr.chr"
+	barrier_char = chars + (8*11)
+	laser_char = chars + (8*14)
+	!bin "wyr.spr"
+	
+	!warn * 
+	
+	ldx #$fa
+	txs
+init	sei
+	cld
+	
+	lda #$7f  	;turn off the cia interupts
+	sta $dc0d
+	lda #1
+	sta IRQ_ENABLE 	;enable raster interupt
+	lda #<irq	;init raster irq
+	sta $314
+	lda #>irq
+	sta $315
+	lda #$f8
+	sta RASTER_LINE
+	lda #0
+	sta SPR_ENABLE
+	jsr clear_screen
+	jsr clear_color
+	
+	tax		;table for getting MS nybble
+-	txa
+	lsr
+	lsr
+	lsr
+	lsr
+	sta hi_nybble_table,x
+	inx
+	bne -
+	
+	lda #<SCREEN	;build collision table
+	sta zpa		;34 bytes instead of 50 ;)
+	lda #>SCREEN
+	sta zpb
+-	lda zpa
+	sta scrlo,x
+	clc
+	adc #40
+	sta zpa
+	lda zpb
+	sta scrhi,x
+	adc #0
+	sta zpb
+	inx
+	cpx #25
+	bne -
+	
+reinit	sei
+	lda #0
+	sta checkpoint_room
+	sta ball_h_speed_table
+	sta ball_h_speed_table+1
+	sta ball_v_speed_table
+	sta ball_v_speed_table+1
+	sta BG_COLOR
+	sta CURSOR_COLOR
+	sta BO_COLOR
+	ldx #$80	;clear zp
+-	sta ball_x,x
+	sta SID,x	;and SID
+	dex
+	bpl -
+	jsr music	;subtune 0
+	lda #1
+	sta music_toggle
+	cli
+	
+
+	
+	lda #$09
+	sta SID+5	;voice 1 attack/decay
+	
+	lda #$58	;ECM on, vert pos = 0
+	sta VIC_CONTROL	;rasterline hi bit = 0
+	lda #$13
+	sta VIC_POINTER	;chars $800, screen $400
+	
+title	ldx #12 
+-	lda title1,x
+	sta SCREEN+(40*10)+14,x
+	lda title2,x
+	sta SCREEN+(40*11)+14,x
+	lda title3,x
+	sta SCREEN+(40*12)+14,x
+	lda title4,x
+	sta SCREEN+(40*13)+14,x
+	lda title5,x
+	sta SCREEN+(40*14)+14,x
+	dex
+	bpl -
+	
+	ldy #0		;lsb is flash direction
+	sty title_bounce_counter
+	sty title_bounce_dir
+	inx		;0
+	lda #3
+	sta title_flash_timer
+title_loop
+	jsr frame_wait
+	dec title_flash_timer
+	bne title_check_fire
+	lda #3
+	sta title_flash_timer
+	tya
+	and #1
+	beq down_flash
+	inx
+	cpx #4
+	bne flash_title
+	iny
+	dex
+	jmp flash_title
+down_flash	
+	dex
+	cpx #$ff
+	bne flash_title
+	iny 
+	inx
+flash_title
+	lda flashing_table,x
+	sta BG_COLOR
+
+bounce_title
+	lda title_bounce_dir
+	and #1
+	beq bounce_title_up
+bounce_title_down
+	lda title_bounce_counter
+	beq +
+	sec
+	sbc #1
+	sta title_bounce_counter
+	jmp set_vert
++	inc title_bounce_dir
+	jmp set_vert
+bounce_title_up
+	lda title_bounce_counter
+	cmp #7
+	beq +
+	clc
+	adc #1
+	sta title_bounce_counter
+	bne set_vert
++	inc title_bounce_dir
+set_vert
+	lda $d011
+	and #%01111000
+	ora title_bounce_counter
+	sta $d011
+title_check_fire
+	jsr check_fire	;wait for fire
+	bne title_loop
+	
+-	jsr frame_wait
+	jsr check_fire	;trap fire
+	beq -
+	
+			;set up status bar	
+	lda #$5b	;vert pos = 3, default
+	sta $d011
+	lda #%01111111
+	sta SPR_ENABLE
+	ldy #38		;energy bar sprite for check points
+	sty SPR_OFFSET
+	dey		;hollow ball for status
+	sty SPR_OFFSET+3
+	sty SPR_OFFSET+4
+	sty SPR_OFFSET+5
+	sty SPR_OFFSET+6
+	lda #36		;filled ball
+	sta SPR_OFFSET+1 ;goal ball
+	sta SPR_OFFSET+2 ;player
+	
+	
+	ldy #4
+	sty flashing_timer
+	sty SPRITE_XY+4 ;player
+	sty SPR_COLOR+3 ;status ball colors
+	iny
+	sty SPR_COLOR+4
+	iny
+	sty SPR_COLOR+5
+	iny
+	sty SPR_COLOR+6
+	lda #%01111000
+	sta SPRITE_X_MSB
+	lda #20
+	sta SPRITE_XY+6	;move to position in status
+	sta SPRITE_XY+10
+	lda #45
+	sta SPRITE_XY+8
+	sta SPRITE_XY+12
+	lda #150
+	sta SPRITE_XY+7
+	sta SPRITE_XY+9
+	lda #175
+	sta SPRITE_XY+11
+	sta SPRITE_XY+13
+	
+	
+	ldx #4		;reset death count
+-	lda #$10	;"0"
+	sta score,x
+	lda last_score_save-1,x
+	sta SCREEN + (8*40) + 31,x
+	dex
+	bne -
+	
+	stx ball_type
+
+ball_select_start	;starting room/ball selection
+	jsr new_ball
+	jsr spawn
+	jsr check_fire
+	beq begin
++	jsr check_left
+	bne +
+	inc ball_type
++	jsr check_right
+	bne +
+	dec ball_type
++	lda ball_type
+	and #%00000011
+	tax
+	lda starting_room,x
+	sta checkpoint_room
+	lda #6
+	jsr wait_for_v_blank
+	lda #0
+	sta SPR_COLOR+2
+	beq ball_select_start
+	
+begin	sta spawn_flag
+	lda ball_type
+	and #%00000011
+	tax
+	dec SPR_OFFSET+3,x
+	inc ball_unlocked_flags,x
+	lda #1
+	jsr music	;subtune 1
+	lda #0
+	sta SPRITE_XY+2
+	beq spawn_now
+	
+;-----------------------------------------
+;
+respawn	jsr spawn
+spawn_now
+	ldx #44
+	lda #%00010000	;triangle
+	jsr play_sound
+	jmp spriter
+	
+;-----------------------------------------
+;-----------------------------------------
+;MAIN LOOP
+
+main_loop 
+	jsr frame_wait
+
+	lda spawn_flag  ;ball select mode
+	beq ball_active
+	jsr new_ball
+	jsr check_fire
+	bne +
+	dec spawn_flag	;0
+	beq ball_active ;branch always
++	jsr check_left
+	bne +
+-	inc ball_type
+	jsr check_unlocked_balls
+	beq -
++	jsr check_right
+	bne +
+-	dec ball_type
+	jsr check_unlocked_balls
+	beq -
++	lda #6
+	jsr wait_for_v_blank
+	lda #0
+	sta SPR_COLOR+2
+	jmp spriter
+
+check_unlocked_balls 
+	lda ball_type
+	and #%00000011
+	tax
+	ldy ball_unlocked_flags,x	
+	rts
+	
+ball_active
+	lda dead_flag
+	beq +
+	jmp respawn
+
++	lda sitting_flag
+	beq +
+	jsr check_fire
+	bne main_loop
+	lda #-16
+	sta v_speed
+	lda #0		;*
+	sta sitting_flag
+	bne main_loop
+
++	lda bounce_flag
+	beq +
+	dec bounce_flag
+	jmp main_loop	
+
++	lda #1		;gravity
+	clc
+	adc v_speed
+	bmi +
+	cmp #71
+	bcc +
+	lda #71
++	sta v_speed
+
+joy_right 
+	jsr check_right
+	bne joy_left
+	lda #8
+	clc
+	adc h_speed
+	bmi +
+	cmp #119
+	bcc +
+	lda #119
++	sta h_speed
+
+joy_left 
+	jsr check_left
+	bne drag
+	lda h_speed
+	sec
+	sbc #8
+	bpl +
+	cmp #-120
+	bcs +
+	lda #-120	
++	sta h_speed
+
+drag	lda h_speed	;apply drag
+	beq get_speed
+	bmi +
+	sec
+	sbc #1
+	jmp drag_out
++	clc
+	adc #1
+drag_out 
+	sta h_speed
+	
+
+get_speed 		;convert byte speed/8 to current ball attribute table
+	ldx #0		;get h_speed
+	lda h_speed	;negative?
+	bpl +
+	eor #$ff
+	clc
+	adc #1
+	inx		;x is 1 if negative	
++	lsr
+	lsr
+	lsr		;/8
+	asl		;two byte wide table
+	tay
+	lda ball_h_speed_table,y
+	sta ball_h_speed_zp
+	lda ball_h_speed_table+1,y
+	sta ball_h_speed_zp+1
+	cpx #1		;negative flag set?
+	bne +
+	lda #ball_h_speed_zp
+	jsr complement16
+	
++	ldx #0		;get v_speed
+	lda v_speed	;negative?
+	bpl +
+	eor #$ff
+	clc
+	adc #1
+	inx		;x is 1 if negative	
++	lsr
+	lsr
+	lsr		;/8
+	asl		;two byte wide table
+	tay
+	lda ball_v_speed_table,y
+	sta ball_v_speed_zp
+	lda ball_v_speed_table+1,y
+	sta ball_v_speed_zp+1
+	cpx #1		;negative flag set?
+	bne +
+	lda #ball_v_speed_zp
+	jsr complement16
+	
++	lda #ball_x
+	ldx #ball_h_speed_zp
+	jsr add16
+	
+	lda #ball_y
+	ldx #ball_v_speed_zp
+	jsr add16
+			
+check_collision 
+	lda h_speed+1	;change order of collision checks based on speed
+	bpl +
+	eor #$ff
+	clc
+	adc #1
++	sta tempx
+	lda v_speed+1
+	bpl +
+	eor #$ff
+	clc
+	adc #1
++	cmp tempx
+	bcs +
+	jsr check_top_collision
+	jsr check_bottom_collision
+	jsr check_left_collision
+	jsr check_right_collision
+	jmp boundary_check
++	jsr check_left_collision
+	jsr check_right_collision
+	jsr check_top_collision
+	jsr check_bottom_collision
+
+	
+boundary_check		;check if ball left playing area
+	lda spawn_flag	;skip boundray checks if dead
+	and dead_flag
+	bne spriter
+	
+	ldy #0
+b_c_x_r	lda ball_x+1    ;check right exit
+	cmp #224
+	bcc b_c_x_l
+	inc current_room
+	lda #33
+	sta ball_x+1
+	sty ball_x
+	jsr level	;returns beq, a != 0
+	beq b_c_out	;branch always
+	
+b_c_x_l cmp #32		;check left exit
+	bcs b_c_y_t
+	dec current_room
+	lda #223
+	sta ball_x+1
+	sty ball_x
+	jsr level
+	beq b_c_out
+	
+b_c_y_t	lda ball_y+1
+	cmp #240
+	bcc b_c_y_b
+	cmp #251
+	bcs b_c_out
+	sec
+	lda current_room
+	sbc #map_width
+	sta current_room
+	lda #188
+	sta ball_y+1
+	sty ball_y
+	jsr level	
+	beq b_c_out	
+	
+b_c_y_b	lda ball_y+1	;check bottom exit
+	cmp #190
+	bcc b_c_out
+	lda current_room
+	clc
+	adc #map_width
+	sta current_room
+	cmp #49		;out of the bottom of the map?
+	bcs end_game	;end the game
+	lda #253
+	sta ball_y+1
+	lda #$ff
+	sta ball_y
+	jsr level
+
+b_c_out	
+spriter	lda ball_x+1
+	clc
+	adc #24		;correct x,y for visible screen
+	sta SPRITE_XY+4	;put in VIC registers
+	lda ball_y+1
+	clc
+	adc #50
+	sta SPRITE_XY+5
+	
+	jmp main_loop
+;-----------------------------------------
+;-----------------------------------------
+;End Sequence
+end_game
+-	jsr check_fire
+	beq -
+	lda #2
+	sta end_animation_timer
+	sta end_game_flag
+	jsr music	;subtune 2, endgame music
+	lda #0
+	sta SPR_ENABLE
+	sta SPRITE_X_MSB
+	sta SPRITE_XY+4
+	ldx #14		;lt blue
+	stx BG_COLOR
+	ldx #9		;brown 
+	stx EBG_COLOR_1
+	ldx #7		;fill laser char /w 0
+-	sta laser_char,x
+	dex
+	bpl -
+	ldx #3
+-	lda score+1,x
+	sta last_score_save,x
+	sta SCREEN + (8*40) + 32,x
+	dex
+	bpl -
+	
+	lda #%00000100
+	sta laser_char+1
+	asl 
+	sta laser_char+5
+	asl
+	asl
+	sta laser_char+2
+	asl
+	sta laser_char+4
+
+	sec
+	lda #180	;x co-ords are fixed
+	sta SPRITE_XY+6
+	sbc #20
+	sta SPRITE_XY+8
+	sbc #20
+	sta SPRITE_XY+10
+	sbc #20
+	sta SPRITE_XY+12
+	ldx #3
+	ldy #0		;flag for decending/rising
+	lda #16
+-	sta tempx,x	;hold temp y co-ords on ZP
+	sty zpa,x
+	sbc #4
+	dex
+	bpl -
+	
+	;draw sky
+	ldx #12
+	lda #<SCREEN+5
+	sta tempb
+	lda #>SCREEN+5
+	sta tempc
+sky_loop	
+	ldy #23
+-	lda #$1f	;blank
+	sta (tempb),y
+	dey
+	bpl -
+	jsr add40
+	dex
+	bpl sky_loop
+	
+	ldx #11
+ground_loop
+	ldy #23
+-	lda #$4e	;laser, now "grass" in EBG 1
+	sta (tempb),y
+	dey
+	bpl -
+	jsr add40
+	dex
+	bpl ground_loop
+	
++	lda #%01111000
+	sta SPR_ENABLE
+	
+	lda #<SCREEN+(40*12)+5
+	sta tempb
+	lda #>SCREEN+(40*12)+5
+	sta tempc
+	
+end_animation		;animate parallax mountains
+	jsr check_fire
+	bne +
+-	jsr check_fire
+	beq -
+	jmp restart	
++	dec end_animation_timer
+	bne end_bounce 
+	ldy #23
+	lda end_animation_flag
+	and #1
+	clc
+	adc #$1d 
+-	sta (tempb),y
+	dey
+	bpl -
+	dec end_animation_flag
+	lda #10
+	sta end_animation_timer
+	
+end_bounce		;bounce the balls	
+	ldx #3
+-	lda tempx,x
+	ldy zpa,x	;0 going down, 1 going up
+	beq eb_down
+	cmp #0
+	bne +
+	sta zpa,x
+	beq eb_next
++	sec
+	sbc #1
+	sta tempx,x
+	jmp eb_next
+	
+eb_down cmp #16
+	bne +
+	sta zpa,x
+	bne eb_next
++	clc
+	adc #1
+	sta tempx,x
+eb_next pha
+	txa
+	asl
+	tay
+	pla
+	clc
+	adc #200
+	sta SPRITE_XY+7,y
+	dex
+	bpl -
+	jsr frame_wait
+	beq end_animation
+	
+add40
+	lda tempb
+	clc
+	adc #40
+	sta tempb
+	bcc +
+	inc tempc
++	rts
+	
+	
+;-----------------------------------------
+;SUB-ROUTINES
+;-----------------------------------------
+;Collision sub-routines
+
+check_left_collision 
+	ldy #8
+	ldx #1
+	jsr check_tile
+	bcs +
+	ldy #3
+	ldx #1
+	jsr check_tile
+	bcs +
+	ldy #12
+	ldx #1
+	jsr check_tile
+	bcc _rts
++	lda #ball_x
+	jsr align_char_negative
+	jsr bounce
+	lda #h_speed
+	jsr complement8
+	jmp horizontal_bounce
+_rts	rts
+
+check_right_collision 
+	ldy #8
+	ldx #15
+	jsr check_tile
+	bcs +
+	ldy #3
+	ldx #15
+	jsr check_tile
+	bcs +
+	ldy #12
+	ldx #15
+	jsr check_tile
+	bcc check_out
++	lda #ball_x
+	jsr align_char_positive
+	jsr bounce
+	jsr horizontal_bounce
+	lda #h_speed
+	jmp complement8
+
+check_bottom_collision 
+	ldy #15
+	ldx #8
+	jsr check_tile
+	bcs +
+	ldy #15
+	ldx #3
+	jsr check_tile
+	bcs +
+	ldy #15
+	ldx #12
+	jsr check_tile
+	bcc check_out
++	lda #ball_y
+	jsr align_char_positive
+	jsr bounce	;set bounce_flag with a, play sfx
+	jsr vertical_bounce
+	lda v_speed
+	cmp #12
+	bcs +
+	lda #1
+	sta sitting_flag
+	lda #0
+	sta h_speed
++	lda #v_speed
+	jmp complement8
+	
+check_top_collision 
+	ldy #0
+	ldx #8
+	jsr check_tile
+	bcs +
+	ldy #0
+	ldx #3
+	jsr check_tile
+	bcs +
+	ldy #0
+	ldx #12
+	jsr check_tile
+	bcc check_out
++	lda #ball_y
+	jsr align_char_negative	
+	jsr bounce
+	lda #v_speed
+	jsr complement8
+	jmp vertical_bounce
+check_out 
+	rts
+	
+check_tile		;x and y hold offset
+	clc		
+	tya
+	adc ball_y+1
+	tay
+	lsr		;divide by 8
+	lsr
+	lsr
+	tay
+	cmp #24		;out of bottom of screen? (or a low negative negative)
+	bcc +
+	clc
+	jmp no_collision
++	lda scrlo,y
+	sta zpa
+	lda scrhi,y
+	sta zpb
+	txa
+	clc
+	adc ball_x+1
+	tay
+	lsr		;divide by 8
+	lsr
+	lsr
+	tay
+	ldx #16		;preset a timer for several possible collisions
+	lda (zpa),y
+	
+	cmp #$4f	;spike
+	bne laser_ck
+die	lda dead_flag
+	bne still_dead	;don't play death sfx again if multiple checks set it off
+	inc dead_flag
+	ldx #16
+-	lda #%10000000	;noise
+	jsr play_sound
+	inc SPR_OFFSET+2
+ 	inc SPR_COLOR+2
+	jsr frame_wait
+	dec SPR_OFFSET+2
+	jsr frame_wait
+	dex
+	dex
+	bne -
+	stx SPR_COLOR+2
+	lda #40		;pause after death before respawn
+	jsr wait_for_v_blank
+	
+	ldx #3		;increment death counter
+	clc
+	lda #1
+	bcc +
+-	lda #0
++	adc score+1,x
+	cmp #$1a
+	bcc +
+	sbc #10
++	sta score+1,x
+	dex
+	bpl -
+still_dead 
+	sec
+	rts
+	
+laser_ck 
+	cmp #$8e	;horizontal laser
+	beq lase
+	cmp #$8d	;vertical laser
+	bne cp_ck
+lase	lda laser_flag	;set in irq
+	and #1
+	bne die
+	clc
+	bcc no_collision
+	
+cp_ck	cmp #$0c	;checkpoint
+	bne bar_ck
+	lda current_room
+	cmp checkpoint_room
+	beq hit_solid
+	sta checkpoint_room
+	jsr check_ball_room
+	bne +		;are we in one of the corners to collect a ball?
+	lda #1
+	sta ball_unlocked_flags,x
+	lda #36
+	sta SPR_OFFSET+3,x
++	jsr spawn
+	lda #0
+	sta SPRITE_XY+4
+	sta SPRITE_XY+2	;collectable ball if there
+	lda ball_x+1
+	adc #24
+	sta SPRITE_XY
+	lda ball_y+1
+	adc #66
+	sta SPRITE_XY+1
+	ldx #32		;hi freq
+-	lda #%00100000	;saw
+	jsr play_sound
+	dec SPRITE_XY+1
+	jsr frame_wait
+	dex
+	dex
+	bpl -
+	lda #0
+	sta SPRITE_XY
+	jsr frame_wait
+	clc
+	rts
+hit_solid
+	sec
+	rts
+bar_ck	cmp #$cb	;colored barrier
+	bne tile_ok
+	lda ball_type
+	and #%00000011
+	clc
+	adc #4
+	cmp barrier_color
+	bne + 
+	clc
+	bcc no_collision
++	jmp die
+	
+tile_ok	cmp #$1
+no_collision 
+	rts
+	
+horizontal_bounce 
+	jsr check_fire	;add speed if fire held on bounce
+	bne +
+	jmp add_h_speed	;skip slowdown from bounce
++	jsr sub_h_speed
+	jsr check_down	;lower speed if down is held
+	bne b_out
+	jmp sub_h_speed
+
+vertical_bounce 
+	jsr check_fire
+	bne +
+	jmp add_v_speed
++	jsr sub_v_speed
+	jsr check_down
+	bne b_out
+	jmp sub_v_speed
+b_out	rts	
+
+
+add_v_speed	
+	lda #8		;increase vertical speed
+	clc
+	adc v_speed
+	bmi +
+	cmp #71
+	bcc +
+	lda #71
++	sta v_speed
+	lda #0
+	sta sitting_flag
+	rts
+	
+sub_v_speed 
+	lda v_speed	;decrease vertical speed
+	sec
+	sbc #8
+	bcs +
+	lda #0
++	sta v_speed
+	rts
+	
+add_h_speed 
+	lda #8		;increase horizontal speed
+	clc
+	adc h_speed
+	bmi +
+	cmp #119
+	bcc +
+	lda #119
++	sta h_speed
+	rts
+	
+sub_h_speed 
+	lda h_speed	;decrease horizontal speed
+	sec
+	sbc #8
+	bcs +
+	lda #0
++	sta h_speed
+	rts
+	
+bounce	lda #1		;flag for slight delay on bounce
+	sta bounce_flag
+	lda ball_y
+	sta freq1	;lo
+	ldx #7		;hi freq
+	lda #%00010000	;triangle
+	jsr play_sound
+	rts
+	
+align_char_negative	;move sprite from collision point to outside of char
+	sta zp		;routine for negative speed
+	ldy #1
+-	lda (zp),y
+	clc
+	adc #1
+	sta (zp),y
+	and #%00000111
+	bne -
+	dey
+	sta (zp),y
+	rts
+
+align_char_positive	;routine for postive speed
+	sta zp
+	ldy #1
+	lda (zp),y
+	and #%11111000
+	sta (zp),y
+	dey
+	tya
+	sta (zp),y
+	rts
+
+;-----------------------------------------
+;Joystick
+	
+check_fire		;returns 0 if button pressed
+	lda #%00010000
+	!byte $2c	;bit
+check_down	
+	lda #%00000010
+	!byte $2c
+check_left	
+	lda #%00000100
+	!byte $2c
+check_right 
+	lda #%00001000
+	and joy_temp
+	rts
+	
+;-----------------------------------------
+;SFX
+
+play_sound 
+	stx SID+1	;hi freq voice 1
+	stx freq1	;ghost reg for low voice 1
+	sta SID+4	;control reg voice 1
+	eor #1
+	sta SID+4
+	rts
+	
+;-----------------------------------------	
+
+new_ball 
+	lda ball_type
+	and #%00000011
+	sta tempx
+	tay
+	clc
+	adc #4
+	sta SPR_COLOR+2
+	tya
+	asl		;table 8 bytes wide
+	tay
+	
+	ldx #0
+-	lda ball_h_speed,y
+	sta ball_h_speed_zp,x
+	lda ball_v_speed,y
+	sta ball_v_speed_zp,x
+	iny
+	inx
+	cpx #2
+	bne -
+	
+	ldx #15		;build table for horizontal speed
+	ldy #0
+-	clc
+	lda ball_h_speed_zp
+	adc ball_h_speed_table,y
+	sta ball_h_speed_table+2,y
+	lda ball_h_speed_zp+1
+	adc ball_h_speed_table+1,y
+	sta ball_h_speed_table+3,y
+	iny
+	iny
+	dex
+	bpl -
+	
+	ldx #7		;build table for vertical speed
+	ldy #0
+-	clc
+	lda ball_v_speed_zp
+	adc ball_v_speed_table,y
+	sta ball_v_speed_table+2,y
+	lda ball_v_speed_zp+1
+	adc ball_v_speed_table+1,y
+	sta ball_v_speed_table+3,y
+	iny
+	iny
+	dex
+	bpl -
+	rts	
+	
+;-----------------------------------------
+;Spawn a player at checkpoint
+
+spawn   
+	lda checkpoint_room
+	sta current_room
+	jsr level	;sets the ckpnt location below
+	jsr get_spawn_xy
+	lda tempx
+	sta ball_x+1
+	lda tempy
+	sta ball_y+1
+	ldy #1
+	sty spawn_flag
+	dey
+	sty dead_flag
+	sty bounce_flag
+	sty sitting_flag
+	sty h_speed
+	sty v_speed
+	rts
+	
+get_spawn_xy
+	lda checkpoint_screen_location
+	sta zpa
+	lda checkpoint_screen_location+1
+	sec
+	sbc #$d8	;get sprite xy from screen address
+	sta zpb
+	
+	ldy #0
+-	lda zpa
+	sec
+	sbc #40		;screen_loc/40
+	sta $c400,y	;save remainder
+	sta zpa
+	lda zpb
+	sbc #0
+	sta zpb
+	iny
+	bcs -
+	dey
+	tya
+	asl
+	asl
+	asl		;*8
+	sec
+	sbc #18
+	sta tempy
+	dey
+	lda $c400,y
+	asl
+	asl
+	asl
+	sta tempx
+	rts
+;-----------------------------------------
+
+clear_screen 
+	ldx #0
+-	sta SCREEN,x
+	sta SCREEN+$100,x
+	sta SCREEN+$200,x
+	sta SCREEN+$300,x
+	dex
+	bne -
+	rts
+	
+clear_color 
+	ldx #0
+-	sta COLOR,x
+	sta COLOR+$100,x
+	sta COLOR+$200,x
+	sta COLOR+$300,x
+	dex
+	bne -
+	rts
+
+;-----------------------------------------
+;Math routines
+
+add16	sta a_moda1+1	;add two 16 bit numbers in the ZP
+	sta a_moda2+1
+	stx a_modb1+1
+	ldy #1
+	ldx #0
+	clc
+a_moda1	lda $A0,x
+a_modb1	adc $A0,x
+a_moda2	sta $A0,x
+	inx
+	dey
+	bpl a_moda1
+	rts
+	
+;------------------
+	
+
+
+;------------------
+
+complement16 
+	sta c_moda1+1
+	sta c_moda2+1
+	clc
+	ldx #0
+	ldy #1
+c_moda1	lda $A0,x
+	eor #$ff
+	sty c_modb1+1	;adds 1 to lo byte and 0 to high with carry
+c_modb1	adc #$A0
+c_moda2	sta $A0,x
+	inx
+	dey
+	bpl c_moda1
+	rts
+
+;------------------
+	
+complement8 
+	sta zp
+	ldy #0
+	lda (zp),y
+	eor #$ff
+	clc
+	adc #1
+	sta (zp),y
+	rts
+	
+;-----------------------------------------
+;IRQ
+irq	;lda IRQ_REGISTER
+	;sta IRQ_REGISTER
+	lda v_blank
+	beq +
+	dec v_blank
++	lda end_game_flag
+	bne no_laser_toggle
+
+	dec flashing_timer
+	bne no_flash
+	lda #5		;color cycle checkpoint chars
+	sta flashing_timer
+	inc flashing_counter
+	lda flashing_counter
+	and #%00000011
+	tax
+	lda flashing_table,x
+	ldy #0
+	sta (checkpoint_screen_location),y
+	iny
+	sta (checkpoint_screen_location),y
+	sta SPR_COLOR	;checkpoint effect sprite
+
+	ldx #7		;animate barrier char
+-	lda #%11001100
+	eor barrier_char,x
+	sta barrier_char,x
+	dex
+	bpl -
+	
+no_flash 
+	lda dead_flag
+	beq no_dead
+	dec SPR_COLOR+1	;sprite for player death
+no_dead 
+	dec laser_timer	;flash laser, set flag
+	bne no_laser_toggle
+	lda #80
+	sta laser_timer
+	inc laser_flag
+	lda laser_flag
+	and #1
+	beq las_off
+	lda #$fe
+	!byte $2c	;bit
+las_off	lda #$ff
+	tax
+	ldy #7
+-	txa
+	sec
+	bmi +
+	clc
++	rol
+	tax
+	sta laser_char,y
+	dey
+	bpl -
+
+no_laser_toggle		;animate laser char
+	ldx #7
+-	clc
+	lda laser_char,x
+	bpl +
+	sec
++	rol
+	sta laser_char,x
+	dex
+	bpl -
+	
+	inc freq1
+	lda freq1
+	sta SID
+	
+	lda $dc00	;read joystick port 2
+	sta joy_temp
+	
+	lda $c5		;last key pressed
+	cmp #$3f	;run/stop
+	bne +
+	dec $c5
+restart
+	ldx #$fa
+	txs 
+	jmp init	;init game
+
++	cmp #$3c	;space
+	bne +
+	lda last_key
+	cmp #$40	;no key pressed
+	bne +
+	lda current_tune
+	jsr music	;reinit
+	lda #1
+	eor music_toggle
+	sta music_toggle
+	
++	lda $c5		;last key pressed
+	sta last_key
+
+	lda music_toggle
+	beq +
+	jsr music+3
+
++	lda IRQ_REGISTER
+	sta IRQ_REGISTER
+	jmp IRQ_RETURN
+	
+frame_wait 
+	lda #1
+wait_for_v_blank 
+	sta v_blank
+-	lda v_blank
+	bne -
+	rts	
+
+;-----------------------------------------
+;level display code
+!src "level.a"
+!src "music.a"
+;-----------------------------------------
+;Tables
+
+title1	!byte $1A,$00,$00,$00,$1A,$00,$1A,$00,$1A,$00,$1A,$1A,$00
+title2	!byte $1B,$00,$00,$00,$1B,$00,$1B,$00,$1B,$00,$1B,$00,$1B
+title3	!byte $1C,$00,$1C,$00,$1C,$00,$00,$1C,$00,$00,$1C,$1C,$00
+title4	!byte $1B,$00,$1B,$00,$1B,$00,$00,$1B,$00,$00,$1B,$00,$1B
+title5	!byte $00,$1A,$00,$1A,$00,$00,$00,$1A,$00,$00,$1A,$00,$1A
+
+starting_room !byte 0,6,42,48
+
+last_score_save !byte $10,$10,$10,$10
+
+;Ball Properties
+ball_v_speed	!word $0090,$0060,$00a0,$0078
+ball_h_speed	!word $0020,$0038,$0018,$0025
+
+flashing_table !byte 0,11,12,1
+
+joy_tab	!byte $ff,$ff,$ff,$ff,$ff,3,1,2,$ff,5,7,6,$ff,4,0,$ff
+
+ball_h_speed_table = $c000 
+ball_v_speed_table = $c100 
+scrhi = $c200
+scrlo = $c200+25
+hi_nybble_table = $c300
+
+tile_data !bin "wyr.til"
+map_data !bin "wyr.map"
+
+;-----------------------------------------
+;-----------------------------------------
+;-----------------------------------------
+;-----------------------------------------
+;-----------------------------------------
+
+
+!eof
+
+yussef kamaal remembrance
+

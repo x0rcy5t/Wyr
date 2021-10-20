@@ -1,0 +1,595 @@
+;Music routine for Wyr
+;
+;by Jeffrey Ouellette 2020
+;
+
+
+;ghost_regs = $02
+;v2_freq_lo = $02
+;v3_freq_lo = $03
+;v2_freq_hi = $04
+;v3_freq_hi = $05
+;v2_pulse_width_lo = $06
+;v3_pulse_width_lo = $07
+;v2_pulse_width_hi = $08
+;v3_pulse_width_hi = $09
+;v2_control = $0a
+;v3_control = $0b
+
+;music_timer = $10 ;$11
+;music_data_pointer = $12 ;$13
+;duration_timer = $14 ;$15
+;lfo = $16
+;v2_data = $17 ;$18
+;v3_data = $19 ;$1a
+;current_tune = $1b
+
+;-----------------------------------------
+;-----------------------------------------
+;-----------------------------------------
+;-----------------------------------------	
+	
+
+music
+	jmp init_music
+	jmp play_music
+
+init_music
+	sta current_tune
+	asl
+	asl
+	adc #3
+	tax
+	ldy #3
+-	lda tune_table,x
+	sta voice_data,y
+	dex
+	dey
+	bpl -
+	
+	ldx #$14
+	lda #0
+	sta SID+$04
+	sta SID+$0b
+	sta SID+$12
+-	sta ghost_regs,x
+	dex
+	bpl -
+	lda #%01001010	;volume 14, band-pass
+	sta SID+$18
+	lda #%00110110	;set resonance, filter v2 v3
+	sta SID+$17
+	lda #$04	;filter hi byte
+	sta SID+$16
+	lda #$75	;set adsr
+	sta SID+$0c	;v2 ad
+	lda #$ba
+	sta SID+$0d	;sr
+	lda #$9b
+	sta v3_pulse_width_lo
+	lda #$60
+	sta SID+$13	;v3 ad
+	lda #$ea	;sr
+	sta SID+$14
+	lda #1
+	sta music_timer
+	sta music_timer+1
+	sta duration_timer
+	sta duration_timer+1
+	rts
+		
+play_music
+	ldx #1
+music_loop
+	dec music_timer,x
+	beq +
+	dex
+	bpl music_loop
+	bmi write_regs
++	lda rate,x
+	sta music_timer,x
+
+	dec duration_timer,x
+	lda duration_timer,x
+	beq new_note
+	cmp #1
+	bcs skip_gate
+gate_off
+	lda #0
+	beq next_voice
+	
+new_note
+	ldy music_data_pointer,x
+	cpx #1
+	beq v3_note
+v2_note	lda (v2_data),y
+	bpl +			;$ff to loop data
+	ldy #0			;reset pointer to data
+	beq v2_note		;branch always
++	pha
+	iny
+	lda (v2_data),y	;duration should never be < 2
+	bne set_note		;branch always
+v3_note	lda (v3_data),y
+	bpl +
+	ldy #0
+	beq v3_note
++	pha
+	iny
+	lda (v3_data),y
+set_note
+	iny
+	sty music_data_pointer,x
+	sta duration_timer,x
+	pla
+	beq next_voice		;rest
+	pha
+	and #$0f
+	tay
+	lda note_table_lo,y
+	sta v2_freq_lo,x
+	lda note_table_hi,y
+	sta v2_freq_hi,x
+	pla
+	tay
+	lda hi_nybble_table,y
+	tay
+	beq continue_note
+-	lsr v2_freq_hi,x
+	ror v2_freq_lo,x
+	dey
+	bne -
+continue_note	
+	lda #1
+next_voice
+	ora waveforms,x
+	sta v2_control,x
+skip_gate	
+	dex
+	bpl music_loop
+	
+write_regs
+	inc lfo
+	lda lfo
+	and #%00000111
+	tax
+	lda lfo_table_lo,x
+	clc
+	adc v3_freq_lo
+	sta v3_freq_lo
+	lda lfo_table_hi,x
+	adc v3_freq_hi
+	sta v3_freq_hi
+
++	ldx #0
+	ldy #0
+-	lda ghost_regs,y
+	sta $d407,x
+	lda ghost_regs+1,y
+	sta $d40e,x
+	iny
+	iny
+	inx
+	cpx #5
+	bne -
+	
+ 	rts
+
+rate	!byte 3,6
+
+waveforms !byte %00100000,%00010000
+
+lfo_table_lo !byte 25,25,25,25,-25,-25,-25,-25
+lfo_table_hi !byte 0,0, 0, 0,$ff,$ff,$ff,$ff
+
+note_table_lo
+	!byte $00,$79,$8c,$d3,$6d,$45,$66,$d6,$98,$b1,$28,$01,$42
+note_table_hi
+	!byte $00,$44,$48,$4c,$51,$56,$5b,$60,$66,$6c,$73,$7a,$81
+
+
+;Note Data:
+;
+;first byte:
+;lo nybble - 1-12, note in octave 6, 0 = rest
+;hi nybble - number of octaves to lower note
+;
+;second byte: duration of note
+
+tune_table
+	!word tune0_v2_music_data
+	!word tune0_v3_music_data
+	!word tune1_v2_music_data
+	!word tune1_v3_music_data
+	!word tune2_v2_music_data
+	!word tune2_v3_music_data
+	
+;-----------------------------------------
+;title tune
+
+tune0_v2_music_data
+	!byte rest,ww
+	
+	!byte a6,48
+	!byte rest,h
+	
+	!byte g6,48
+	!byte rest,h
+	
+	!byte d6,48
+	!byte rest,h
+	
+	!byte a5,e
+	!byte c6,e
+	!byte d6,e
+	!byte rest,q
+	!byte a5,e
+	!byte c6,e
+	!byte d6,e
+	
+	!byte rest,w
+	
+	!byte a6,e
+	!byte e5,e
+	!byte g5,e
+	!byte f6s,e
+	!byte g6,e
+	!byte a6,e
+	!byte e6,q
+	
+	!byte e6,h
+	!byte rest,h
+	
+	!byte a6,e
+	!byte e5,e
+	!byte g5,e
+	!byte f6s,e
+	!byte g6,e
+	!byte a6,e
+	!byte g6,q
+	
+	!byte g6,h
+	!byte rest,h
+	
+	!byte f6s,e
+	!byte a5,e
+	!byte c6,e
+	!byte e6,e
+	!byte f6s,e
+	!byte g6,e
+	!byte f6s,e
+	!byte e6,e
+	
+	!byte f6s,e
+	!byte a5,e
+	!byte c6,e
+	!byte e6,e
+	!byte f6s,e
+	!byte g6,e
+	!byte f6s,e
+	!byte a6,e
+	
+	!byte a5,h
+	!byte rest,h+w
+	
+	!byte $ff
+tune0_v3_music_data
+	!byte a3,s
+	!byte a2,s
+	!byte rest,s
+	!byte g4,s
+	!byte a2,s
+	!byte rest,s
+	!byte f4s,e
+	!byte g4,s
+	!byte rest,s
+	!byte g3,s
+	!byte rest,s
+	!byte g2,s
+	!byte rest,s
+	!byte a4,s
+	!byte rest,s
+	!byte $ff
+	
+;-----------------------------------------
+;in game tune
+
+tune1_v2_music_data
+	!byte c2,e
+	!byte f2s,e
+	!byte g2,e
+	!byte c3,e
+	!byte e3,q
+	!byte f3s,q
+	
+	!byte e3,e
+	!byte c3,e
+	!byte rest,e
+	!byte g2,e
+	!byte rest,q
+	!byte e2,q
+
+	!byte c2,e
+	!byte f2s,e
+	!byte g2,e
+	!byte c3,e
+	!byte e3,q
+	!byte f3s,q
+	
+	!byte g3,e
+	!byte e3,e
+	!byte rest,e
+	!byte c3,q
+	!byte rest,e
+	!byte g2,q
+	
+	!byte $ff
+	
+	
+tune1_v3_music_data
+	!byte rest,ww
+	!byte g4,ww
+	!byte b4,ww
+	!byte d5,ww
+	!byte e4,ww
+	
+	!byte g4,e
+	!byte d5,s
+	!byte rest,s
+	!byte d5,qh
+	!byte d5,e
+	!byte e4,q
+	!byte g4,w
+	
+	!byte d5,h
+	!byte b4,h
+	!byte g4,w
+	
+	!byte d5,e
+	!byte g5,e
+	!byte f5s,q
+	!byte e5,q
+	!byte d5,q
+	!byte b4,w
+	
+	!byte g4,e
+	!byte g4,e
+	!byte b4,q
+	!byte g4,q
+	!byte a4,q
+	!byte e4,w
+	
+	!byte rest,ww
+	!byte g4,ww
+	!byte rest,ww
+
+	!byte b4,q
+	!byte g5,q
+	!byte f5s,q
+	!byte e5,q
+	
+	!byte d5,e
+	!byte e5,e
+	!byte f5s,e
+	!byte b4,e
+	!byte a4,e
+	!byte b4,s
+	!byte rest,s
+	!byte b4,q
+	
+	!byte a5,q
+	!byte g5,e
+	!byte f5s,e
+	!byte e5,h
+	
+	!byte d5,e
+	!byte e5,h
+	!byte f5s,qh
+	!byte b5,w
+	
+	!byte e6,s
+	!byte rest,s
+	!byte d6,e
+	!byte c6,e
+	!byte b5,e
+	!byte a5,q
+	!byte g5,q
+	
+	!byte f6s,e
+	!byte d6,e
+	!byte b5,e
+	!byte f5s,e
+	!byte e5,s
+	!byte d5,s
+	!byte rest,s
+	!byte e5,s
+	!byte d5,s
+	!byte rest,s
+	!byte e5,s
+	!byte d5,s
+	
+	!byte e5,h
+	!byte rest,h
+				
+	!byte $ff
+
+;-----------------------------------------
+;ending tune
+
+tune2_v2_music_data
+	!byte e3,s
+	!byte b2,s
+	!byte g2,s
+	!byte e2,s
+	!byte $ff
+tune2_v3_music_data
+	!byte rest,ww
+	!byte e5,ww
+	!byte rest,w
+	!byte e6,w
+	!byte b5,w
+	
+	!byte g5,qh
+	!byte f5,qh
+	!byte g5,q
+	
+	!byte e5,w
+	!byte rest,w
+	
+	!byte g5,s
+	!byte b5,s
+	!byte e6,s
+	!byte f6,s
+	!byte rest,24
+	
+	!byte g5,s
+	!byte b5,s
+	!byte e6,s
+	!byte f6,s
+	!byte rest,18
+	
+	!byte g5,s
+	!byte b5,s
+	!byte e6,s
+	!byte f6,s
+	
+	!byte g6,s
+	!byte f6,e
+	!byte e6,e
+	!byte f6,e
+	!byte g6,e
+	!byte e6,qh
+	
+	!byte e6,w
+	
+	!byte $ff
+	
+;-----------------------------------------	
+
+;note definitions
+
+ww = 64
+w = 32
+h = 16
+qh = 12
+q = 8
+e = 4
+s = 2
+
+kick = c2
+snare1 = d4
+snare2 = b3
+hihat = b6
+
+rest = 00
+
+c1 = $51
+c1s = $52
+d1 = $53
+d1s = $54
+e1 = $55
+f1 = $56
+f1s = $57
+g1 = $58
+g1s = $59
+a1 = $5a
+a1s = $5b
+b1 = $5c	
+	
+c2 = $41
+c2s = $42
+d2 = $43
+d2s = $44
+e2 = $45
+f2 = $46
+f2s = $47
+g2 = $48
+g2s = $49
+a2 = $4a
+a2s = $4b
+b2 = $4c	
+
+	
+c3 = $31
+c3s = $32
+d3 = $33
+d3s = $34
+e3 = $35
+f3 = $36
+f3s = $37
+g3 = $38
+g3s = $39
+a3 = $3a
+a3s = $3b
+b3 = $3c	
+	
+c4 = $21
+c4s = $22
+d4 = $23
+d4s = $24
+e4 = $25
+f4 = $26
+f4s = $27
+g4 = $28
+g4s = $29
+a4 = $2a
+a4s = $2b
+b4 = $2c
+	
+c5 = $11
+c5s = $12
+d5 = $13
+d5s = $14
+e5 = $15
+f5 = $16
+f5s = $17
+g5 = $18
+g5s = $19
+a5 = $1a
+a5s = $1b
+b5 = $1c	
+	
+c6 = $01
+c6s = $02
+d6 = $03
+d6s = $04
+e6 = $05
+f6 = $06
+f6s = $07
+g6 = $08
+g6s = $09
+a6 = $0a
+a6s = $0b
+b6 = $0c
+
+!eof
+
+	!byte a6,s
+	!byte rest,s
+	!byte a6,s
+	!byte rest,s
+	!byte d6,s
+	!byte rest,s
+	!byte g6,s
+	!byte rest,s
+	!byte a6,q
+	!byte rest,q
+
+	!byte a6,s
+	!byte rest,s
+	!byte a6,s
+	!byte rest,s
+	!byte d6,s
+	!byte rest,s
+	!byte g6,s
+	!byte rest,s
+	!byte c6,q
+	!byte rest,q
+	
+	!byte $ff
+	
+	
+2 1 2 1
+
+4 3 2 1 
+

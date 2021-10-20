@@ -1,0 +1,246 @@
+;Map decode and display
+
+map_width = 7
+map_height = 7
+
+room_width = 3 ;a 6x6 tile map with 2 tiles per byte
+room_height = 6
+room_size = 18	;18 bytes define one room
+tile_size = 8   ;8 bytes define one tile
+skip_length = (40*3)+16 ;amount of bytes to skip on screen to start next row of tiles
+
+level	ldy #0		;uncolor checkpoint if one exists
+	tya
+	sta SPRITE_XY+2
+	sta (checkpoint_screen_location),y
+	iny
+	sta (checkpoint_screen_location),y
+	lda #<$7f0	;reset checkpoint off screen
+	sta checkpoint_screen_location
+	lda #>$7f0
+	sta checkpoint_screen_location+1
+	
+	
+	lda current_room
+	pha
+	cmp #7
+	bcs +
+	lda #5		;green, wall color
+	ldx #10		;lt red, spike color
+	ldy #4		;purple, barrier color
+	bne color_room
++	cmp #14
+	bcs +
+	lda #9		;brown
+	ldx #1		;white
+	ldy #5		;green
+	bne color_room
++	cmp #21
+	bcs +
+	lda #14		;light blue
+	ldx #10		;light red
+	ldy #7		;yellow
+	bne color_room
++	cmp #28
+	bcs +
+	lda #2		;red
+	ldx #15		;lt grey
+	ldy #7		;yellow
+	bne color_room
++	cmp #35
+	bcs +
+	lda #8		;orange
+	ldx #3		;cyan
+	ldy #6		;blue
+	bne color_room
++	cmp #42
+	bcs +
+	lda #12		;grey
+	ldx #1		;white
+	ldy #5		;green
+	bne color_room
++	lda #7		;yellow
+	ldx #2		;red
+	ldy #4		;purple
+
+color_room
+	sta BG_COLOR	;backdrop
+	stx EBG_COLOR_1	;spikes
+	sty EBG_COLOR_3	;barriers
+	sty barrier_color
+
+	
++	pla
+	tay
+	ldx #0		;are we on bottom half of map?
+	cmp #map_width*(map_height/2)
+	bcc +
+	ldx #16		;use second set of tiles
++	stx tile_add	;zp, added to tile values	
+	
+	lda #<map_data
+	sta zpa
+	lda #>map_data
+	sta zpb
+	cpy #0
+	beq got_room
+-	lda #room_size
+	clc
+	adc zpa
+	sta zpa
+	bcc +
+	inc zpb
++	dey		;now 0
+	bne -
+
+got_room
+	sty tempx	;tile# of the room
+	sty tempy	;count number of tiles per row   
+	lda #<SCREEN+5
+	sta zpc
+	lda #>SCREEN+5
+	sta zpd
+room_loop
+	ldy tempx	;point in room data
+	lda (zpa),y	;get byte with two tiles
+	tax
+	and #%00001111	;get low nybble
+	clc
+	adc tile_add	;0 or 16
+	pha		;store for later
+	lda hi_nybble_table,x
+	cmp #$0f	;checkpoint tile, must be first nybble
+	bne no_cp
+	pha
+	clc
+	lda zpc
+	adc #81
+	sta checkpoint_screen_location
+	lda zpd
+	adc #$d4	;points to color ram
+	sta checkpoint_screen_location+1
+	pla
+	bne +		;tile 15 is always 15
+	
+no_cp	adc tile_add	;0 or 16
++	jsr plot_tile   ;high nybble is left-most tile
+	pla		;jsr advances screen pointer to start of next tile
+	jsr plot_tile	;plot second tile
+	inc tempy
+	inc tempx
+	lda tempx
+	cmp #room_size
+	beq room_done	;exit
+	lda tempy
+	cmp #room_width
+	bne room_loop
+	lda #0
+	sta tempy
+	lda zpc		;add to screen pointer
+	clc		;to draw next row
+	adc #skip_length
+	sta zpc
+	bcc +
+	inc zpd
++	jmp room_loop	 
+room_done		;put ball above CP if it can be collected 
+	lda current_room
+	jsr check_ball_room
+	bne +
+	txa
+	lda ball_unlocked_flags,x
+	bne +
+	txa
+	clc
+	adc #4
+	sta SPR_COLOR+1	;object ball
+	jsr get_spawn_xy
+	lda tempx
+	clc
+	adc #24
+	sta SPRITE_XY+2
+	lda tempy
+	clc
+	adc #50
+	sta SPRITE_XY+3
++	lda #0
+	rts
+	
+plot_tile
+
+	tay
+	lda #<tile_data
+	sta tempa
+	lda #>tile_data
+	sta tempb
+	cpy #0
+	beq got_tile
+-	lda #tile_size
+	clc
+	adc tempa
+	sta tempa
+	bcc +
+	inc tempb
++	dey		;now 0
+	bne -
+got_tile	
+	;ldy #0
+	sty tempz	;y-offset into chars
+	sty tempc	;y-offset into screen
+tile_loop
+	ldy tempz
+	lda (tempa),y
+	tax
+	and #%00001111
+	pha
+	lda hi_nybble_table,x
+	ldy tempc
+	jsr check_char
+	sta (zpc),y
+	iny
+	pla
+	jsr check_char
+	sta (zpc),y
+	iny
+	sty tempc
+	inc tempz
+	lda tempz
+	cmp #tile_size
+	beq tile_done
+	tya
+	and #%00000011
+	bne tile_loop
+	lda tempc
+	clc
+	adc #40-4
+	sta tempc
+	jmp tile_loop
+tile_done
+	lda zpc
+	clc
+	adc #4
+	sta zpc
+	bcc +
+	inc zpd
++	rts
+
+check_char		;is char a spike or a laser?
+	cmp #$0f
+	bne +
+	lda #$4f	;set spike EBG_COLOR_1
++	cmp #$0e
+	bne +
+	lda #$8e	;set laser EBG_COLOR_2
++	cmp #$0b
+	bne +
+        ora #$cb	;set barrier EBG_COLOR_3
++	rts
+
+check_ball_room		;are we in one of the corner rooms?
+	ldx #3		;return 0 if true, x holds 0-3
+-	cmp starting_room,x
+	beq +
+	dex
+	bpl -
++	rts
+

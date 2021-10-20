@@ -1,0 +1,28 @@
+Wyr
+
+By malcontent
+For the 2020 Reset64 4k Craptastic Compo
+
+PAL compatible, but designed for a NTSC machine with old SID.
+
+Story:
+
+An experiment has gone horribly wrong. While creating a dimensional bridge to another world, scientists accidentally capture four alien beings. The device goes haywire shortly thereafter and destroys the laboratory, forcing the scientists to flee. The four spherical aliens are trapped in our world, but a chance remains. The portal, at the heart of the lab, has not yet closed, and it will take the power of all of them to return home.
+
+Gameplay:
+
+Used a joystick in port 2. Press fire to start. Press Run/Stop to reset the game. Spacebar toggles music.
+
+You are a ball! At the beginning you can select which of the four alien balls you wish to start as by pressing left or right. Then start looking for the others. Each ball has different properties: Blue bounces the highest but moves sideways the slowest, Green moves sideways very quickly but can not bounce high. Purple and Yellow are in between these two. Purple is easiest to start with, both in balance, and where it starts on the map.
+
+Hold the fire button to bounce, press down to deaden your bounce. Avoid spikes and lasers as you try to navigate the lab. Find checkpoints to make your life easier. When you die and return to a checkpoint you may switch between collected balls before respawning by pressing left or right. The four balls all reside in the four corners of the map, the status display shows the balls you have collected in the respective corners. There are multiple paths depending on which ball you start with and the order you collect the others. You can only pass through colored barriers with a ball of the matching color. The exit to the portal is out the bottom of the map, you will need to collect all four balls before you can pass through this central area.
+
+Tips:
+
+Avoid over-control. Slamming into a wall with the button held may bounce you severely. Make small hops by tapping the button and nudging the joystick. Quickly build up speed by bouncing around in a narrow area before edging outward. The map has 7x7 screens.
+
+Notes:
+
+This game is heavily inspired the great freeware game "Within a Deep Forest." The engine was designed to have a big map area for the size. The compromises include: a limit of 16 characters, and 16 values for the map. This way two tiles in the map or two chars in a tile can be represented by one byte. Wyr is pronounced like the English "Weir."
+
+Send Comments to JDDGames@yahoo.com

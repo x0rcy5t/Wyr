@@ -1,0 +1,133 @@
+;convert map/tile data
+;there are only 16 tiles and 16 chars
+;compress 2 8-bit values into 4-bit nybbles
+;
+;charpad 1 exports 4 byte headers into maps, hexedit them out
+;
+;run then save off the ram from the vice monitor
+;strip load address off with hexeditor
+
+	!to "nybbler.prg",cbm
+	
+	in_data_length_tile = 496	;tiles
+	in_data_length_map = 1764	;map
+	eof_marker = $ff	;for the output, not input
+
+	*=3000 ;sys 3000
+	
+	lda #<in_data_length_map
+	sta $fb
+	lda #>in_data_length_map
+	sta $fc
+	lda #<map_data
+	sta $fd
+	lda #>map_data
+	sta $fe
+	lda #<compressed_data_map
+	sta $10
+	lda #>compressed_data_map
+	sta $11
+	
+compress_loop	
+	ldy #0
+	lda ($fd),y
+	asl
+	asl
+	asl
+	asl
+	iny
+	ora ($fd),y
+	dey
+	sta ($10),y
+	lda #1
+	clc
+	adc $10
+	sta $10
+	bcc +
+	inc $11
++	lda #2
+	clc
+	adc $fd
+	sta $fd
+	bcc +
+	inc $fe
+	
++	lda $fb
+	sec
+	sbc #2
+	sta $fb
+	bcs +
+	dec $fc
++	lda $fb
+	bne compress_loop
+	lda $fc
+	bne compress_loop
+	lda #eof_marker
+	sta ($10),y
+;
+	lda #<in_data_length_tile
+	sta $fb
+	lda #>in_data_length_tile
+	sta $fc
+	lda #<tile_data
+	sta $fd
+	lda #>tile_data
+	sta $fe
+	lda #<compressed_data_tile
+	sta $10
+	lda #>compressed_data_tile
+	sta $11
+	
+compress_loop2 
+	ldy #0
+	lda ($fd),y
+	asl
+	asl
+	asl
+	asl
+	sta $12
+	iny
+	lda ($fd),y
+	and #%00001111
+	ora $12
+	dey
+	sta ($10),y
+	lda #1
+	clc
+	adc $10
+	sta $10
+	bcc +
+	inc $11
++	lda #2
+	clc
+	adc $fd
+	sta $fd
+	bcc +
+	inc $fe
+	
++	lda $fb
+	sec
+	sbc #2
+	sta $fb
+	bcs +
+	dec $fc
++	lda $fb
+	bne compress_loop2
+	lda $fc
+	bne compress_loop2
+	lda #eof_marker
+	sta ($10),y	
+	
+	rts
+	
+	
+	
+map_data
+	!bin "ball1.map"
+	!bin "ball2.map"
+tile_data
+	!bin "ball1.til"
+	!bin "ball2.til"
+
+compressed_data_map = $c000
+compressed_data_tile = $c800
